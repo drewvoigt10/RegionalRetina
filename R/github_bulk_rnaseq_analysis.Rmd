@@ -1,0 +1,89 @@
+---
+title: "bulk rna sequencing analysis"
+author: "Drew Voigt"
+date: "3-17-2021"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+
+STAR mapping was run with the following parameters:
+--outFilterType BySJout \
+--outFilterMultimapNmax 20 \
+--alignSJoverhangMin 8 \
+--alignSJDBoverhangMin 1 \
+--outFilterMismatchNmax 999 \
+--outFilterMismatchNoverReadLmax 0.04 \
+--alignIntronMin 20 \
+--alignIntronMax 1000000 \
+--alignMatesGapMax 1000000 \
+--outSAMtype BAM SortedByCoordinate Unsorted \
+--outSAMunmapped Within KeepPairs
+
+
+
+After star mapping, reads were counted with the count_reads.R script
+
+The output of the count_reads.R script is a list called summarized_experiment.RData, which is accessible via github/data
+
+```{r setup, include=FALSE}
+library(edgeR)
+library(tidyverse)
+load("data/data_from_google_drive/gtf.RData")
+```
+
+```{r }
+load("data/data_from_google_drive/bulk_summarized_experiment.RData")
+
+comparison.vector = c("fovea", "perifovea", "macula")
+experiment_design <- read_tsv("data/data_from_google_drive/bulk_design_voigt.txt")
+
+experiment_design$group <- as.factor(experiment_design$group) 
+experiment_design$donor_id <- as.factor(experiment_design$donor_id)
+
+experiment_counts <- summarized_experiment$counts[, experiment_design$sample_id]
+
+experiment_dgelist <- DGEList(counts = experiment_counts, 
+                            group = experiment_design$group)
+experiment_dgelist <- calcNormFactors(experiment_dgelist)
+
+# Fiiltering lowly expressed genes here.
+keep <- rowSums(cpm(experiment_dgelist) > 1) >= min(table(experiment_design$group))
+experiment_dgelist <- experiment_dgelist[keep, , keep.lib.sizes=FALSE]
+
+# Design matrix
+design_matrix <- model.matrix(~0+group+donor_id, data=experiment_design) 
+colnames(design_matrix) <- make.names(colnames(design_matrix))
+experiment_dgelist <-estimateDisp(experiment_dgelist, design_matrix)
+
+fit <- glmFit(experiment_dgelist, design_matrix)
+my.contrasts <- makeContrasts(MvsF=groupmacula-groupfovea, PvsF=groupperifovea-groupfovea, MvsP=groupmacula-groupperifovea, levels=design_matrix)
+lrt.MvsF <- glmLRT(fit, contrast = my.contrasts[,"MvsF"])
+lrt.PvsF <- glmLRT(fit, contrast = my.contrasts[,"PvsF"])
+lrt.MvsP <- glmLRT(fit, contrast = my.contrasts[,"MvsP"])
+
+fdr_cutoff <- 0.05
+
+MvsF.table <- topTags(lrt.MvsF, n=Inf) %>% 
+  as.data.frame() %>% 
+  rownames_to_column("gene_id") %>% ## keeping row names in the dataframe
+  as_tibble() %>%
+  filter(FDR < 0.01, abs(logFC) > 1) %>%
+  left_join(gtf_tbl)
+
+
+PvsF.table <- topTags(lrt.PvsF, n=Inf) %>% 
+  as.data.frame() %>% 
+  rownames_to_column("gene_id") %>% 
+  as_tibble() %>%
+  filter(FDR < 0.01, abs(logFC) > 1) %>%
+  left_join(gtf_tbl)
+
+MvsP.table <- topTags(lrt.MvsP, n=Inf) %>% 
+  as.data.frame() %>% 
+  rownames_to_column("gene_id") %>% 
+  as_tibble() %>%
+  filter(FDR < 0.01, abs(logFC) > 1) %>%
+  left_join(gtf_tbl)
+```

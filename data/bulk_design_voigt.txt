@@ -1,0 +1,13 @@
+sample_id	core_id	donor_id	tissue	project_name	group	donor
+fovea_donor_1	fovea1	donor_1	fovea	bullseye	fovea	donor_1
+macula_donor_1	macula1	donor_1	macula	bullseye	macula	donor_1
+perifovea_donor_1	perifovea1	donor_1	perifovea	bullseye	perifovea	donor_1
+fovea_donor_2	fovea2	donor_2	fovea	bullseye	fovea	donor_2
+macula_donor_2	macula2	donor_2	macula	bullseye	macula	donor_2
+perifovea_donor_2	perifovea2	donor_2	perifovea	bullseye	perifovea	donor_2
+fovea_donor_3	fovea3	donor_3	fovea	bullseye	fovea	donor_3
+macula_donor_3	macula3	donor_3	macula	bullseye	macula	donor_3
+perifovea_donor_3	perifovea3	donor_3	perifovea	bullseye	perifovea	donor_3
+fovea_donor_4	fovea4	donor_4	fovea	bullseye	fovea	donor_4
+macula_donor_4	macula4	donor_4	macula	bullseye	macula	donor_4
+perifovea_donor_4	perifovea4	donor_4	perifovea	bullseye	perifovea	donor_4

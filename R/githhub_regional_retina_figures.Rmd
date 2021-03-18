@@ -1,0 +1,251 @@
+---
+title: "RegionalRetina_Figures"
+author: "Drew Voigt"
+date: "3/17/2021"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+Please see the RegionalRetina_aggregating_filtering_classifying.Rmd script or the hosted seurat RData object at https://drive.google.com/drive/folders/1HWB7T4PqWSyYeBX3uVdAuRCmzYqeDXgA?usp=sharing for access the the seurat object used for these scripts.
+```{r}
+library(Seurat) # v3.2.3
+library(tidyverse)
+load("data/data_from_google_drive/seurat_object.RData")
+```
+
+Figure 3A: dimensionality reduction plot
+```{r}
+gg_color_hue <- function(n, light_intensity) {
+  hues = seq(15, 375, length = n + 1)
+  hcl(h = hues, l = light_intensity, c = 100)[1:n]
+}
+
+light <- gg_color_hue(15,87)
+dark <- gg_color_hue(15,65)
+
+class_colors <- c(dark[13], light[12],
+                  dark[11], light[11],
+                  dark[9], light[8],
+                  dark[7], light[5],
+                  dark[4], light[3],
+                  dark[2], light[2],
+                  dark[1], light[1]
+                  )
+Idents(seurat_obj) <- "celltype"
+DimPlot(seurat_obj, cols = (class_colors))
+```
+
+
+Figure 3B: Comparison of cell proportions
+```{r}
+celltype_levels <- seurat_obj@meta.data %>% 
+  .[["celltype"]]
+
+seurat_obj[["celltype_levels"]] <- factor(celltype_levels, 
+                                          levels = c("rod", "cone", "cone-off-BC",
+                                                     "cone-off-BC-BC3A", "cone-on-BC", "rod-BC",
+                                                     "RGC", "amacrine", "horizontal", "Muller", "astrocyte", 
+                                                     "microglia", "pericyte", "endothelial"))
+
+
+proportion_data <- seurat_obj@meta.data %>% 
+  select(library, celltype_levels) %>%
+  group_by(library, celltype_levels) %>%
+  summarize(n = n()) %>%
+  mutate(freq = n / sum(n)) %>%
+  ungroup() %>%
+  complete(library, celltype_levels, fill = list(n = 0, freq = 0)) %>%
+  mutate(region = ifelse(str_detect(library, "perifovea"), "perifovea", "fovea"))
+
+
+proportion_data %>% 
+    ggplot(aes(x = celltype_levels, 
+               y = freq, 
+               fill = celltype_levels, 
+               group = library)) +
+      geom_bar(
+        stat = "identity",
+        position = "dodge",
+        color = "black"
+      ) +
+    scale_fill_manual(values = (class_colors)) + 
+    coord_flip() + 
+    facet_wrap(~region, nrow = 1) +
+  theme(legend.position = "none",
+        axis.title = element_text(size = 12),
+        axis.text = element_text(size = 12))
+```
+
+
+Figure 3C: Violin Plots
+```{r}
+## using violin plotting functions from our package cellcuratoR (github.com/cellcuratoR)
+source(here("scripts/github_plotting_functions.R"))
+overview_vln_genes <- c("PDE6A", "ARR3", "GRIK1", "ERBB4", "GRM6", 
+                        "PRKCA", "PRPH", "GAD1", "ONECUT2", "RLBP1", 
+                        "GFAP", "C1QA", "RGS5", "VWF")
+
+seurat_obj[["final_cluster_labels"]] <- seurat_obj[["celltype"]] ## this function requires an input column called 'final_cluster_labels'
+construct_violin_plot(my_object = seurat_obj,
+                                  genes_to_investigate = overview_vln_genes,
+                                  colors = class_colors)
+```
+
+Figure 4: Regional expression in CONE PHOTORECEPTOR CELLS
+```{r}
+load("data/data_from_google_drive/retina_by_region_6_studies.RData")
+# retina_by_region is a list with six elements
+# Each list element contains differential expression results from six independent scRNA-seq
+# studies of human retina with at least two regional libraries. 
+# element 1: current study
+# element 2: Voigt et al foveal vs peripheral retina, 2019
+# element 3: Yan et al foveal vs peripheral retina, 2020
+# element 4: Cowan et al foveal vs peripheral retina, 2020
+# element 5 Liang et al macular vs peripheral retina, 2020 (single-nucleus RNA-seq)
+# element 6: Sridhar et al central vs peripheral INFANT retina, 2020
+
+# Details on processing of each complementary study can be provided upon request. 
+
+source(here("scripts/github_plotting_functions.R"))
+
+my_factor_levels <- c("bullseye_fov_perifov",
+                           "EER_fov_periph",
+                           "yan_fov_periph",
+                           "cowan_fov_per", 
+                           "liang_mac_periph",
+                           "sridhar_cent_periph")
+my_colors <- c("#d73027",
+"#fc8d59",
+"#fee090",
+"#e0f3f8",
+"#91bfdb",
+"#4575b4")
+
+cone_genes <- c("RIMS2", "CPLX4", "WRB", "SLC4A7", "POU2AF1", "GPATCH1", "COL4A3", "BCO2", "CC2D2A", "RPGR", "RP1L1", "BICD1", "WDR47")
+for(i in 1:length(cone_genes)){
+  regional_figure(object = seurat_obj,
+                  cell_population = "cone",
+                  celltype_vector = rep("cone", 6),
+                  logFC_variable = "logFC.pseudobulk",
+                  gene_of_interest = cone_genes[i],
+                  dge_list = retina_by_region,
+                  dataset_factor_levels = my_factor_levels,
+                  dataset_colors = my_colors,
+                  upper_ylim = 3)
+
+}
+
+# if the logFC is so high that it is off scale, you will see a black bar with the logFC numerically shown below the bar
+```
+
+
+Figure 5: Transcription factors enriched in foveal cones
+```{r}
+## TFs identified from the SysGo database
+
+# foveal enriched TFs
+cone_tfs <- c("POU2AF1", "YBX1", "LBH", "FLYWCH2", "ZNF358", "ZBTB38",
+              "ZC3H6", "THAP5", "ZCRB1", "RCAN3", "BHLHE41", "ZC2HC1A",
+              "YAF2", "ZC3H15", "CEBPZ", "MIER1", "ZNF385B", "VEZF1",
+              "PHF19", "GTF3A")
+for(i in 1:length(cone_tfs)){
+  regional_figure(object = seurat_obj,
+                  cell_population = "cone",
+                  celltype_vector = rep("cone", 6),
+                  logFC_variable = "logFC.pseudobulk",
+                  gene_of_interest = cone_tfs[i],
+                  dge_list = retina_by_region,
+                  dataset_factor_levels = my_factor_levels,
+                  dataset_colors = my_colors,
+                  upper_ylim = 3)
+
+}
+# if the logFC is so high that it is off scale, you will see a black bar with the logFC numerically shown below the bar
+
+```
+
+
+SI Figure 3: Transcription factors enriched in peripheral cones
+```{r}
+# perifoveal enriched TFs
+cone_tfs <- c("IER5", "TEAD3", "ZNRF1", "MBD5", "BAZ2B", "AFF1", "ZNF207", "REL", "NFKBIA",
+              "TBPL1", "ADNP2", "ZNF274", "ZNF451", "GPBP1", "RAX", "GTF3C1", "FOSB", "ZC3H14", "KLF6", "ZFYVE28")
+for(i in 1:length(cone_tfs)){
+  regional_figure(object = seurat_obj,
+                  cell_population = "cone",
+                  celltype_vector = rep("cone", 6),
+                  logFC_variable = "logFC.pseudobulk",
+                  gene_of_interest = cone_tfs[i],
+                  dge_list = retina_by_region,
+                  dataset_factor_levels = my_factor_levels,
+                  dataset_colors = my_colors,
+                  upper_ylim = 3)
+
+}
+# if the logFC is so high that it is off scale, you will see a black bar with the logFC numerically shown below the bar
+```
+
+
+Figure 6: Regional expression in ROD PHOTORECEPTOR CELLS and MULLER CELLS
+```{r}
+load("data/data_from_google_drive/retina_by_region_6_studies.RData")
+# retina_by_region is a list with six elements
+# Each list element contains differential expression results from six independent scRNA-seq
+# studies of human retina with at least two regional libraries. 
+# element 1: current study
+# element 2: Voigt et al foveal vs peripheral retina, 2019
+# element 3: Yan et al foveal vs peripheral retina, 2020
+# element 4: Cowan et al foveal vs peripheral retina, 2020
+# element 5 Liang et al macular vs peripheral retina, 2020 (single-nucleus RNA-seq)
+# element 6: Sridhar et al central vs peripheral INFANT retina, 2020
+
+source(here("scripts/github_plotting_functions.R"))
+
+my_factor_levels <- c("bullseye_fov_perifov",
+                           "EER_fov_periph",
+                           "yan_fov_periph",
+                           "cowan_fov_per", 
+                           "liang_mac_periph",
+                           "sridhar_cent_periph")
+my_colors <- c("#d73027",
+"#fc8d59",
+"#fee090",
+"#e0f3f8",
+"#91bfdb",
+"#4575b4")
+
+rod_genes <- c("PNO1", "RBP7", "SCAPER", "AHI1")
+for(i in 1:length(rod_genes)){
+  regional_figure(object = seurat_obj,
+                  cell_population = "rod",
+                  celltype_vector = rep("rod", 6),
+                  logFC_variable = "logFC.pseudobulk",
+                  gene_of_interest = rod_genes[i],
+                  dge_list = retina_by_region,
+                  dataset_factor_levels = my_factor_levels,
+                  dataset_colors = my_colors,
+                  upper_ylim = 3)
+
+}
+
+muller_genes <- c("FAT1", "DAPL1", "CYP26A1", "TF", "MXRA7", "RDH10", "RLBP1", "FABP5")
+for(i in 1:length(muller_genes)){
+  regional_figure(object = seurat_obj,
+                  cell_population = "Muller",
+                  celltype_vector = c(rep("Muller", 4), "muller", "Muller"),
+                  logFC_variable = "logFC.pseudobulk",
+                  gene_of_interest = muller_genes[i],
+                  dge_list = retina_by_region,
+                  dataset_factor_levels = my_factor_levels,
+                  dataset_colors = my_colors,
+                  upper_ylim = 3)
+
+}
+
+# if the logFC is so high that it is off scale, you will see a black bar with the logFC numerically shown below the bar
+```
+
+
+
+
