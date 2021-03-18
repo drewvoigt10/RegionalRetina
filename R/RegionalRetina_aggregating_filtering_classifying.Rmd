@@ -1,0 +1,145 @@
+---
+title: "RegionalRetina_aggregating_filtering_classifying"
+author: "Voigt"
+date: "3/17/2021"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+
+This Rmd script will overview how to aggregate count files into a Seurat object. Data will be filtered in an identical manner to the manuscript.
+
+In addition to the raw count files, you can also download a pre-aggregated Seurat object .RData file from XXXX and skip this script.
+
+```{r}
+library(Seurat) # v3.2.3
+library(tidyverse)
+```
+
+scRNA-seq data can be downloaded from GEO with the accession number GSE169047.
+Raw count files have the extension "_counts.csv"
+```{r}
+my_files <- list.files("~/LSS/IVR/NGS/raw_data/20200821_uiowa_bullseye_retina/geo/")
+my_count_files <- my_files[grepl(pattern = "*counts.csv", x = my_files)]
+
+# create a list to hold seurat objects from each library
+my_object_list <- vector(length = length(my_count_files), mode = "list")
+
+for(i in 1:length(my_count_files)){
+  count_matrix <- read_csv(paste0("~/LSS/IVR/NGS/raw_data/20200821_uiowa_bullseye_retina/geo/", my_count_files[i]))
+  
+  meta_data <- count_matrix[,c("barcode", "region", "celltype", "library")]
+  
+  # peel off metadata for creation of 10X object
+  # this matrix must be transposed (genes x barcodes) to work with CreateSeuratObject
+  count_matrix <- count_matrix[, -c(1:4)] %>%
+    as.matrix() %>%
+    t()
+  colnames(count_matrix) <- meta_data[["barcode"]]
+  
+  # pull of the donor number and region for this donor
+  donor_information <- meta_data[["library"]][1]
+  
+  my_initial_object <- CreateSeuratObject(counts = count_matrix,
+                                          project = donor_information,
+                                          assays = "RNA")
+  
+  # identify the percent of mitochondrial genes
+  my_initial_object[["mito.genes"]] <- PercentageFeatureSet(my_initial_object, pattern = "^MT-") #
+  
+  my_object_list[[i]] <- my_initial_object
+  names(my_object_list)[[i]] <- donor_information
+}
+```
+
+Next, we will filter the object for lowly expressed genes (low quality cells), highly expressed genes (doublets), or cells with a high percent of mitochondrial genes (low quality cells). We will use the filtering criteria from the methods sections of the manuscript.
+```{r}
+lower.cutoff = 400
+higher.cutoff = 6500
+mito.cutoff = 60
+selection_method = "vst"
+variable_genes = 2000
+
+for(i in 1:length(my_object_list)){
+  my_initial_object <- my_object_list[[i]]
+  my_intial_object <- subset(my_initial_object, 
+                             subset = 
+                               nFeature_RNA < higher.cutoff & 
+                               nFeature_RNA > lower.cutoff & 
+                               mito.genes < mito.cutoff
+                             )
+  my_intial_object <- NormalizeData(my_intial_object, normalization.method = "LogNormalize", scale.factor = 10000)
+  my_intial_object <- FindVariableFeatures(my_intial_object, selection.method = selection_method, nfeatures = variable_genes)
+  my_object_list[[i]] <- my_intial_object
+}
+```
+
+
+Next, we perform cannonical correlation analysis and find anchors.
+This is computationally demanding.
+```{r}
+object.anchors <- FindIntegrationAnchors(object.list = my_object_list, dims=1:25)
+object.combined <- IntegrateData(anchorset = object.anchors, dims = 1:25)
+
+DefaultAssay(object.combined) <- "integrated"
+object.combined <- ScaleData(object.combined, verbose = FALSE)
+object.combined <- RunPCA(object.combined, npcs = 30, verbose = FALSE)
+```
+
+Finally, we perform the clustering and dimensionality rediction
+```{r}
+ElbowPlot(object.combined, ndims = 25)
+final.dim = 23 # 23 seems like a reasonable number of dimensions
+  
+object.combined <- RunUMAP(object.combined, reduction = "pca", dims = 1:final.dim)
+object.combined <- FindNeighbors(object.combined, reduction = "pca", dims = 1:final.dim)
+object.combined <- FindClusters(object.combined, resolution = 0.5)
+```
+
+Finally, we classify clusters into cells based on expression of known marker genes.
+```{r}
+DefaultAssay(object.combined) <- "integrated"
+object.combined <- FindClusters(object.combined, resolution = 0.4)
+DimPlot(object.combined, label = TRUE)
+
+DefaultAssay(object.combined) <- "RNA"
+FeaturePlot(object.combined, features = "RHO") # rod
+FeaturePlot(object.combined, features = "ARR3") # cone
+FeaturePlot(object.combined, features = "GRM6") # CONE-on-BC
+FeaturePlot(object.combined, features = "PRKCA") # ROD-BC
+FeaturePlot(object.combined, features = "GRIK1") # cone-off-BC
+FeaturePlot(object.combined, features = "ONECUT2") # HZ
+FeaturePlot(object.combined, features = "GAD1") # Amacrine
+FeaturePlot(object.combined, features = "C1QA") # microglia
+FeaturePlot(object.combined, features = "VWF") # endothelial
+FeaturePlot(object.combined, features = "ACTA2") # pericyte
+FeaturePlot(object.combined, features = "RLBP1") # Muller
+FeaturePlot(object.combined, features = "GFAP") # Astrocyte
+FeaturePlot(object.combined, features = "THY1") # RGC
+
+
+
+DefaultAssay(object.combined) <- "RNA"
+ordered_celltypes <- c("muller", "rod", "muller", "amacrine", "rgc", 
+                       "rod-bipolar", "cone-off-bipolar", "cone-on-bipolar", "cone-on-bipolar", "cone-off-bipolar", 
+                       "cone-on-bipolar", "horizontal", "cone-off-bipolar", "rgc", "endothelial",
+                       "cone", "cone-off-bipolar", "astrocyte", "rgc", "pericyte", 
+                       "muller", "microglia", "rgc")
+
+celltype <- plyr::mapvalues(object.combined[["seurat_clusters"]][["seurat_clusters"]],
+                            from = seq(from = 0, to = 22),
+                            to = ordered_celltypes)
+
+object.combined[["celltype"]] <- celltype
+```
+
+
+
+Save your object
+```{r}
+# save(object.combined, file = "save_me_somewhere.RData")
+```
+
+
+
